@@ -104,15 +104,15 @@ for (experiment in experiments) {
                             FCcutoff = logfc_threshold)
             dev.off()
 			
-		  	    # Limma MA Plot - NEEDS WORK
-			      png(file.path(contrast_dir_limma, paste0(contrast_name, "_MA_Limma.png")))
-		      	# Assuming fit2 contains the eBayes() output from Limma
-			      limmaMAPlot <- function(fit, coef = 1) {
-				      plot(fit$Amean, fit$coefficients[,coef], pch=20, xlab="Average Expression", ylab="Log Fold Change", main="MA Plot Limma")
-				      abline(h=c(-logfc_threshold, logfc_threshold), col="red")
-			      }
-			      limmaMAPlot(fit2, coef = 1) # Adjust 'coef' if necessary based on your contrasts
-			      dev.off()
+			# Limma MA Plot
+			png(file.path(contrast_dir_limma, paste0(contrast_name, "_MA_Limma.png")))
+			# Assuming fit2 contains the eBayes() output from Limma
+			limmaMAPlot <- function(fit, coef = 1) {
+				plot(fit$Amean, fit$coefficients[,coef], pch=20, xlab="Average Expression", ylab="Log Fold Change", main="MA Plot Limma")
+				abline(h=c(-logfc_threshold, logfc_threshold), col="red")
+			}
+			limmaMAPlot(fit2, coef = 1) # Adjust 'coef' if necessary based on your contrasts
+			dev.off()
 
             # Heatmaps for DESeq2
             if (length(deseq2_sig_genes) > 0) {
