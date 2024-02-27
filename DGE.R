@@ -37,6 +37,8 @@ output_dir_limma <- create_dir(file.path(output_dir, "Limma"))
 heatmap_dir_deseq2 <- create_dir(file.path(output_dir_deseq2, "DESeq2_Heatmaps"))
 heatmap_dir_limma <- create_dir(file.path(output_dir_limma, "Limma_Heatmaps"))
 overlap_dir <- create_dir(file.path(output_dir, "Overlap_Analysis"))
+summary_dir_deseq2 <- create_dir(file.path(output_dir_deseq2, "Summary"))
+summary_dir_limma <- create_dir(file.path(output_dir_limma, "Summary"))
 
 # Import Data Using Tximport
 txi <- tximport(file.path(samples_root_dir, metadata$filename, "quant.sf"), type = "salmon", txOut = TRUE)
@@ -48,6 +50,23 @@ dds <- DESeq(dds)
 # Normalizing Counts for Limma-Voom
 v <- voom(counts(dds), model.matrix(~ Treatment, data = metadata), plot = FALSE)
 fit <- lmFit(v, model.matrix(~ Treatment, data = metadata))
+
+
+# Principal Component Analysis (PCA) for Each Experiment
+performPCA <- function(dds, experiment) {
+  rld <- rlog(dds, blind=FALSE)
+  data <- plotPCA(rld, intgroup=c("Experiment", "Stage"), returnData=TRUE)
+  ggplot(data, aes(x=PC1, y=PC2, color=Experiment, shape=Stage)) +
+    geom_point(size=3) + 
+    ggtitle(paste("PCA for", experiment))
+}
+
+# Run PCA for each experiment
+lapply(unique(metadata$Experiment), function(exp) {
+  dds_subset <- dds[, dds$Experiment == exp]
+  performPCA(dds_subset, exp)
+})
+
 
 # Experiments, Stages, and Contrast Comparisons
 experiments <- unique(metadata$Experiment)
@@ -253,4 +272,74 @@ foreach(experiment = unique(metadata$Experiment)) %dopar% {
 }
 
 
+# Summarize Significant Findings
+summarizeSignificantFindings <- function(dds, contrastDirs) {
+  significantGenesList <- list()
+  for (dir in contrastDirs) {
+    resultsPath <- file.path(dir, "DESeq2_results.tsv")
+    if (file.exists(resultsPath)) {
+      results <- read.csv(resultsPath)
+      sigResults <- results[results$padj < pvalue_threshold, ]
+      sigGenesUp <- sum(sigResults$log2FoldChange > logfc_threshold)
+      sigGenesDown <- sum(sigResults$log2FoldChange < -logfc_threshold)
+      significantGenesList[[dir]] <- list(Upregulated=sigGenesUp, Downregulated=sigGenesDown)
+    }
+  }
+  return(significantGenesList)
+}
 
+# Add a section to summarize WGCNA Findings
+summarizeWGCNAFindings <- function(outputDir, experimentNames) {
+  summaryList <- list()
+  for (experimentName in experimentNames) {
+    relationPath <- file.path(outputDir, paste0(experimentName, "_METraitsRelation.csv"))
+    if (file.exists(relationPath)) {
+      relations <- read.csv(relationPath)
+      significantModules <- which.max(abs(relations$correlation))
+      summaryList[[experimentName]] <- significantModules
+    }
+  }
+  return(summaryList)
+}
+
+# Enhanced Visualization for WGCNA
+plotModuleTraitRelationships <- function(METraitsRelation, outputDir, experimentName) {
+  png(file.path(outputDir, paste0(experimentName, "_ModuleTraitRelationships.png")))
+  corrplot(METraitsRelation, method = "circle")
+  dev.off()
+}
+
+# Summarize and save significant findings for DESeq2 and Limma
+saveSignificantFindingsSummary <- function(outputDirType, method, contrastDirs) {
+  # Use the 'summarizeSignificantFindings' function here
+  significantGenesList <- summarizeSignificantFindings(dds, contrastDirs)
+  summaryFilePath <- file.path(outputDirType, "Summary", paste0(method, "_SignificantFindingsSummary.csv"))
+  # Convert the list to a data frame for easier CSV writing, if necessary
+  # This step may require transformation of 'significantGenesList' to a suitable format
+  write.csv(significantGenesList, summaryFilePath, row.names = TRUE)
+}
+
+# Example calls to save significant findings summaries
+contrastDirsDESeq2 <- list.dirs(path = output_dir_deseq2, full.names = TRUE, recursive = FALSE)
+contrastDirsLimma <- list.dirs(path = output_dir_limma, full.names = TRUE, recursive = FALSE)
+
+saveSignificantFindingsSummary(output_dir_deseq2, "DESeq2", contrastDirsDESeq2)
+saveSignificantFindingsSummary(output_dir_limma, "Limma", contrastDirsLimma)
+
+# After WGCNA analysis:
+
+# Save WGCNA findings summary
+saveWGCNAFindingsSummary <- function(outputDir, experimentNames, method) {
+  summaryList <- summarizeWGCNAFindings(outputDir, experimentNames)
+  summaryFilePath <- file.path(outputDir, "Summary", paste0(method, "_WGCNAFindingsSummary.csv"))
+  # Convert the list to a data frame for easier CSV writing, if necessary
+  # This step may require transformation of 'summaryList' to a suitable format
+  write.csv(summaryList, summaryFilePath, row.names = TRUE)
+}
+
+# Call to save WGCNA findings summaries
+experimentNamesDESeq2 <- sub(pattern = output_dir_deseq2, replacement = "", x = contrastDirsDESeq2)
+experimentNamesLimma <- sub(pattern = output_dir_limma, replacement = "", x = contrastDirsLimma)
+
+saveWGCNAFindingsSummary(output_dir_deseq2, experimentNamesDESeq2, "DESeq2")
+saveWGCNAFindingsSummary(output_dir_limma, experimentNamesLimma, "Limma")
