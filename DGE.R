@@ -192,68 +192,66 @@ for (experiment in experiments) {
 # Register parallel backend to speed up computations
 registerDoParallel(cores = 4) # Adjust based on your system's capabilities
 
-# After normalizing counts for Limma-Voom and defining output directories
-# Select a subset of genes based on variance
-selectSubsetGenesForWGCNA <- function(exprData) {
-  gene_variance <- apply(exprData, 1, var) # Calculate variance for each gene
-  high_variance_genes <- names(sort(gene_variance, decreasing = TRUE)[1:5000]) # Select top 5000 genes
-  return(high_variance_genes)
+# Function to filter out low-expressed genes
+filterLowExpressedGenes <- function(exprData) {
+    cutoff <- log2(10) # Adjust based on your dataset, here using log2 CPM of 10 as an example
+    filteredData <- exprData[rowMeans(log2(exprData + 1)) > cutoff, ]
+    return(filteredData)
 }
 
-# Function to perform WGCNA and save module-trait relationships
-performWGCNAAndSave <- function(exprData, traits, outputDir, experimentName) {
-  # Ensure numeric encoding of factors
-  traits$Treatment <- as.numeric(as.factor(traits$Treatment))
-  
-  # WGCNA: Choose power
-  powers <- c(1:10)
-  sft <- pickSoftThreshold(exprData, powerVector = powers, verbose = 5)
-  softPower <- sft$powerEstimate
-  
-  # Adjacency and TOM matrix
-  adj <- adjacency(exprData, power = softPower)
-  TOM <- TOMsimilarity(adj)
-  
-  # Gene dendrogram and module detection
-  geneTree <- hclust(as.dist(1-TOM), method = "average")
-  minModuleSize <- 30
-  dynamicMods <- cutreeDynamic(dendro = geneTree, deepSplit = 2, minClusterSize = minModuleSize)
-  moduleColors <- labels2colors(dynamicMods)
-  
-  # Calculate eigengenes
-  MEList <- moduleEigengenes(exprData, colors = moduleColors)
-  MEs <- MEList$eigengenes
-  
-  # Relate eigengenes to traits
-  METraitsRelation <- cor(MEs, traits[,c("20E", "Rvalue")], use = "p")
-  
-  # Plot and save module-trait relationships
-  png(file.path(outputDir, paste0("ModuleTrait_", experimentName, ".png")))
-  corrplot(METraitsRelation, method = "circle")
-  dev.off()
-  
-  # Save module-trait relationships to file
-  write.csv(METraitsRelation, file.path(outputDir, paste0("ModuleTrait_", experimentName, "_correlation.csv")))
+# Function to select a subset of genes based on variance
+selectSubsetGenesForWGCNA <- function(exprData) {
+    gene_variance <- apply(exprData, 1, var)
+    high_variance_genes <- names(sort(gene_variance, decreasing = TRUE)[1:5000])
+    return(high_variance_genes)
+}
+
+# Function for WGCNA analysis, adapted to include DESeq2 and Limma data processing
+performWGCNAAndSave <- function(exprData, metadata, experimentName, outputDirType) {
+    filteredExprData <- filterLowExpressedGenes(exprData)
+    high_variance_genes <- selectSubsetGenesForWGCNA(filteredExprData)
+    finalExprData <- filteredExprData[high_variance_genes, ]
+    
+    # Choose power
+    sft <- pickSoftThreshold(finalExprData, powerVector = (1:10), verbose = 5)
+    softPower <- sft$powerEstimate
+    
+    # Build network
+    adj <- adjacency(finalExprData, power = softPower)
+    TOM <- TOMsimilarity(adj)
+    geneTree <- hclust(as.dist(1-TOM), method = "average")
+    dynamicMods <- cutreeDynamic(dendro = geneTree, deepSplit = 2, minClusterSize = 30)
+    mergedDynamicMods <- mergeCloseModules(finalExprData, dynamicMods, cutHeight = 0.25, verbose = 3)
+    
+    # Relate modules to traits
+    traitData <- metadata[, c("20E", "Rvalue")]
+    MEList <- moduleEigengenes(finalExprData, colors = mergedDynamicMods$colors)
+    MEs <- MEList$eigengenes
+    METraitsRelation <- cor(MEs, traitData, use = "pairwise.complete.obs")
+    METraitsPvalue <- corPvalueStudent(METraitsRelation, nrow(finalExprData))
+    
+    # Save results
+    write.csv(METraitsRelation, file.path(output_dir, outputDirType, paste0(experimentName, "_METraitsRelation.csv")))
+    write.csv(METraitsPvalue, file.path(output_dir, outputDirType, paste0(experimentName, "_METraitsPvalue.csv")))
+    
+    png(file.path(output_dir, outputDirType, paste0(experimentName, "_ModuleTraitRelationship.png")))
+    corrplot(METraitsRelation, method = "circle")
+    dev.off()
 }
 
 # Iterate over experiments for WGCNA on DESeq2 and Limma results
 foreach(experiment = unique(metadata$Experiment)) %dopar% {
-  experiment_metadata <- metadata[metadata$Experiment == experiment, ]
-  
-  # DESeq2 Analysis Subset for WGCNA
-  dds_sub <- dds[, dds$Experiment == experiment]
-  vst_data <- assay(vst(dds_sub))
-  high_variance_genes <- selectSubsetGenesForWGCNA(vst_data)
-  
-  performWGCNAAndSave(vst_data[high_variance_genes, ], experiment_metadata, output_dir, paste0(experiment, "_DESeq2"))
-  
-  # Limma Analysis Subset for WGCNA
-  logCPM <- cpm(fit, log = TRUE)
-  high_variance_genes_limma <- selectSubsetGenesForWGCNA(logCPM)
-  
-  performWGCNAAndSave(logCPM[high_variance_genes_limma, ], experiment_metadata, output_dir, paste0(experiment, "_Limma"))
+    experiment_metadata <- metadata[metadata$Experiment == experiment, ]
+    
+    # DESeq2 Data Preparation
+    dds_sub <- dds[, dds$Experiment == experiment]
+    vst_data <- assay(vst(dds_sub, blind = FALSE))
+    performWGCNAAndSave(vst_data, experiment_metadata, paste0(experiment, "_DESeq2"), "DESeq2")
+    
+    # Limma Data Preparation
+    logCPM_data <- cpm(fit, log = TRUE)
+    performWGCNAAndSave(logCPM_data, experiment_metadata, paste0(experiment, "_Limma"), "Limma")
 }
-
 
 
 
