@@ -19,6 +19,9 @@ logfc_threshold <- log2(1.5)
 metadata_path <- "Sample_Metadata.csv"
 samples_root_dir <- "/path/to/samples/" # Adjust this path
 
+# Register parallel backend to speed up computations
+registerDoParallel(cores = 8) # Adjust based on system's capabilities
+
 # Read Metadata
 metadata <- read.csv(metadata_path)
 metadata$Treatment <- with(metadata, paste(Experiment, Stage, sep="_"))
@@ -207,8 +210,7 @@ for (experiment in experiments) {
     }
 }
 
-# Register parallel backend to speed up computations
-registerDoParallel(cores = 4) # Adjust based on your system's capabilities
+
 
 # Function to filter out low-expressed genes
 filterLowExpressedGenes <- function(exprData) {
