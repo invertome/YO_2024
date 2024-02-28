@@ -190,17 +190,6 @@ getTopVarianceGenes <- function(data, topN = 500) {
   return(highVarianceGenes)
 }
 
-# FUNCTION to perform variance filtering and correlation analysis
-performAnalysisForContrast <- function(contrastName, geneData, significantGenes, metadata, outputDir) {
-  # Filter for high variance genes
-  highVarianceGenes <- getTopVarianceGenes(geneData[significantGenes, ], 500)
-  
-  # Perform correlation analysis
-  outputFilePrefix <- file.path(outputDir, contrastName)
-  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, '20E', outputFilePrefix)
-  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, 'Rvalue', outputFilePrefix)
-}
-
 # FUNCTION for Correlation Analyses
 performCorrelationAnalysis <- function(geneExpressionMatrix, significantGenes, metadata, phenotype, outputFilePrefix) {
   # Ensure geneExpressionMatrix only includes significantGenes with high variance
@@ -225,6 +214,19 @@ performCorrelationAnalysis <- function(geneExpressionMatrix, significantGenes, m
   plotAndSaveCorrelations(topPositives, "Top20_Positive")
   plotAndSaveCorrelations(topNegatives, "Top20_Negative")
 }
+
+
+# FUNCTION to perform variance filtering and correlation analysis
+performAnalysisForContrast <- function(contrastName, geneData, significantGenes, metadata, outputDir) {
+  # Filter for high variance genes
+  highVarianceGenes <- getTopVarianceGenes(geneData[significantGenes, ], 500)
+  
+  # Perform correlation analysis
+  outputFilePrefix <- file.path(outputDir, contrastName)
+  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, '20E', outputFilePrefix)
+  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, 'Rvalue', outputFilePrefix)
+}
+
 
 
 # Loop through contrasts to perform analysis
