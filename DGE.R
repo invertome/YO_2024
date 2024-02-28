@@ -282,11 +282,11 @@ foreach(experiment = unique(metadata$Experiment)) %dopar% {
     # DESeq2 Data Preparation
     dds_sub <- dds[, dds$Experiment == experiment]
     vst_data <- assay(vst(dds_sub, blind = FALSE))
-    performWGCNAAndSave(vst_data, experiment_metadata, paste0(experiment, "_DESeq2"), "DESeq2")
+    performWGCNAAndSave(vst_data, experiment_metadata, paste0(experiment, "_DESeq2"), output_dir_deseq2)
     
     # Limma Data Preparation
     logCPM_data <- cpm(fit, log = TRUE)
-    performWGCNAAndSave(logCPM_data, experiment_metadata, paste0(experiment, "_Limma"), "Limma")
+    performWGCNAAndSave(logCPM_data, experiment_metadata, paste0(experiment, "_Limma"), output_dir_limma)
 }
 
 
