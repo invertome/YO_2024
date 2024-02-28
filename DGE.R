@@ -37,7 +37,7 @@ performPCA <- function(dds, experiment, output_dir, is_combined = FALSE) {
   data <- plotPCA(rld, intgroup=c("Experiment", "Stage"), returnData=TRUE)
   
   plot_title <- if (is_combined) "PCA for All Experiments" else paste("PCA for", experiment)
-  p <- ggplot(data, aes(x=PC1, y=PC2, color=Experiment, shape=Stage)) +
+  p <- ggplot(data, aes(x=PC1, y=PC2, color=Stage, shape=Experiment)) +
     geom_point(size=3) + 
     ggtitle(plot_title)
   
