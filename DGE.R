@@ -230,10 +230,10 @@ v <- voom(counts(dds), model.matrix(~ Treatment, data = metadata), plot = FALSE)
 fit <- lmFit(v, model.matrix(~ Treatment, data = metadata))
 
 # Run PCA for each experiment and save the plots in their respective directories
-lapply(unique(metadata$Experiment), function(exp) {
+foreach(exp = unique(metadata$Experiment), .packages = c("DESeq2", "ggplot2"), .export = c("performPCA", "dds", "pca_output_dir")) %dopar% {
   dds_subset <- dds[, dds$Experiment == exp]
   performPCA(dds_subset, exp, pca_output_dir)
-})
+}
 
 # Additionally, perform and save PCA for all experiments together
 performPCA(dds, "All_Experiments", pca_output_dir, is_combined = TRUE)
@@ -241,7 +241,7 @@ performPCA(dds, "All_Experiments", pca_output_dir, is_combined = TRUE)
 # Experiments, Stages, and Contrast Comparisons
 experiments <- unique(metadata$Experiment)
 
-for (experiment in experiments) {
+fforeach(experiment = experiments, .packages = c("DESeq2", "limma", "VennDiagram", "ggplot2", "pheatmap", "EnhancedVolcano"), .export = c("create_dir", "results", "dds", "makeContrasts", "contrasts.fit", "eBayes", "cpm", "performPCA", "vst", "pheatmap", "EnhancedVolcano", "output_dir_deseq2", "output_dir_limma", "heatmap_dir_deseq2", "heatmap_dir_limma", "overlap_dir", "pvalue_threshold", "logfc_threshold")) %dopar% {
     stages <- unique(metadata$Stage[metadata$Experiment == experiment])
     
     # DESeq2 and Limma Analysis for Each Contrast
@@ -376,7 +376,7 @@ for (experiment in experiments) {
 
 
 # Iterate over experiments for WGCNA on DESeq2 and Limma results
-foreach(experiment = unique(metadata$Experiment)) %dopar% {
+foreach(experiment = unique(metadata$Experiment), .packages = c("WGCNA", "DESeq2"), .export = c("filterLowExpressedGenes", "selectSubsetGenesForWGCNA", "performWGCNAAndSave", "dds", "metadata", "output_dir_deseq2", "output_dir_limma")) %dopar% {
     experiment_metadata <- metadata[metadata$Experiment == experiment, ]
     
     # DESeq2 Data Preparation
@@ -391,7 +391,7 @@ foreach(experiment = unique(metadata$Experiment)) %dopar% {
 
 
 # After the WGCNA analysis and saving of METraitsRelation.csv for each experiment
-foreach(experiment = unique(metadata$Experiment)) %dopar% {
+foreach(experiment = unique(metadata$Experiment), .packages = c("corrplot"), .export = c("plotModuleTraitRelationships", "output_dir", "METraitsRelationDESeq2", "METraitsRelationLimma")) %dopar% {
   experiment_metadata <- metadata[metadata$Experiment == experiment, ]
 
   # Define the directory where the METraitsRelation.csv file is saved for each experiment
