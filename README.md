@@ -6,8 +6,8 @@ Jorge L. Perez-Moreno, PhD
 
 The script performs the following analyses and tasks:
 
-- **Differential Expression Analysis**: Utilizes both DESeq2 and Limma-Voom methods to identify differentially expressed genes across conditions or treatments.
 - **PCA**: Generates principal component analysis plots to visualize the data variance and sample relationships.
+- **Differential Expression Analysis**: Utilizes both DESeq2 and Limma-Voom methods to identify differentially expressed genes across conditions or treatments.
 - **Correlation Analysis**: Identifies the top positively and negatively correlated genes with specific phenotypes.
 - **WGCNA**: Constructs a gene co-expression network to find modules of highly correlated genes and relate them to external traits.
 - **Visualization**: Produces heatmaps, volcano plots, MA plots, PCA plots, and Venn diagrams to visualize the results.
@@ -19,8 +19,8 @@ The script performs the following analyses and tasks:
 
 ## Outputs
 
-- **Differential Expression Results**: CSV files with DESeq2 and Limma differential expression analysis results.
 - **PCA Plots**: PCA plots for individual experiments and a combined plot for all experiments.
+- **Differential Expression Results**: CSV files with DESeq2 and Limma differential expression analysis results.
 - **Heatmaps**: Heatmaps showing expression patterns of significant genes.
 - **Volcano and MA Plots**: For both DESeq2 and Limma analyses.
 - **Venn Diagrams**: Illustrating overlaps between DESeq2 and Limma significant genes.
