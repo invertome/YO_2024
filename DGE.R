@@ -22,38 +22,13 @@ samples_root_dir <- "/path/to/samples/" # Adjust this path
 # Register parallel backend to speed up computations
 registerDoParallel(cores = 8) # Adjust based on system's capabilities
 
-# Read Metadata
-metadata <- read.csv(metadata_path)
-metadata$Treatment <- with(metadata, paste(Experiment, Stage, sep="_"))
-metadata$Experiment_Stage <- with(metadata, paste(Experiment, Stage, sep="_"))
+## FUNCTIONS ##
 
-# Helper Function to Create Directories
+# FUNCTION to Create Directories
 create_dir <- function(path) {
   if (!dir.exists(path)) dir.create(path, recursive = TRUE)
   return(path)
 }
-
-# Define Output Directories
-output_dir <- create_dir(file.path(samples_root_dir, "Analysis_Results"))
-output_dir_deseq2 <- create_dir(file.path(output_dir, "DESeq2"))
-output_dir_limma <- create_dir(file.path(output_dir, "Limma"))
-heatmap_dir_deseq2 <- create_dir(file.path(output_dir_deseq2, "DESeq2_Heatmaps"))
-heatmap_dir_limma <- create_dir(file.path(output_dir_limma, "Limma_Heatmaps"))
-overlap_dir <- create_dir(file.path(output_dir, "Overlap_Analysis"))
-summary_dir_deseq2 <- create_dir(file.path(output_dir_deseq2, "Summary"))
-summary_dir_limma <- create_dir(file.path(output_dir_limma, "Summary"))
-
-# Import Data Using Tximport
-txi <- tximport(file.path(samples_root_dir, metadata$filename, "quant.sf"), type = "salmon", txOut = TRUE)
-
-# Prepare DESeq DataSet
-dds <- DESeqDataSetFromTximport(txi, colData = metadata, design = ~ Treatment)
-dds <- DESeq(dds)
-
-# Normalizing Counts for Limma-Voom
-v <- voom(counts(dds), model.matrix(~ Treatment, data = metadata), plot = FALSE)
-fit <- lmFit(v, model.matrix(~ Treatment, data = metadata))
-
 
 # FUNCTION Principal Component Analysis (PCA) for Each Experiment and All Experiments Together
 performPCA <- function(dds, experiment, output_dir, is_combined = FALSE) {
@@ -73,8 +48,187 @@ performPCA <- function(dds, experiment, output_dir, is_combined = FALSE) {
   ggsave(pcaPlotPath, plot = p, width = 10, height = 8)
 }
 
-# Define the root directory for saving PCA plots
+# FUNCTION for correlation analysis and plotting
+# Assuming 'dds' and 'fit' are already created and 'metadata' is loaded
+
+# FUNCTION to get top genes based on variance
+getTopVarianceGenes <- function(data, topN = 500) {
+  variances <- apply(data, 1, var)
+  highVarianceGenes <- names(sort(variances, decreasing = TRUE)[1:topN])
+  return(highVarianceGenes)
+}
+
+# FUNCTION for Correlation Analyses
+performCorrelationAnalysis <- function(geneExpressionMatrix, significantGenes, metadata, phenotype, outputFilePrefix) {
+  # Ensure geneExpressionMatrix only includes significantGenes with high variance
+  significantGeneData <- geneExpressionMatrix[rownames(geneExpressionMatrix) %in% significantGenes,]
+  
+  # Calculate correlation
+  corMatrix <- cor(significantGeneData, metadata[, phenotype, drop = FALSE], use = "pairwise.complete.obs")
+  
+  # Identify top correlated genes
+  topCorrelations <- sort(corMatrix, decreasing = TRUE)
+  topPositives <- head(topCorrelations, 20)
+  topNegatives <- tail(topCorrelations, 20)
+  
+  # Plotting and Saving
+  plotAndSaveCorrelations <- function(corSubset, suffix) {
+    png(paste0(outputFilePrefix, "_", suffix, "_correlation.png"))
+    corrplot(corSubset, method = "circle")
+    dev.off()
+    write.csv(as.data.frame(corSubset), paste0(outputFilePrefix, "_", suffix, "_correlation.csv"))
+  }
+  
+  plotAndSaveCorrelations(topPositives, "Top20_Positive")
+  plotAndSaveCorrelations(topNegatives, "Top20_Negative")
+}
+
+
+# FUNCTION to perform variance filtering and correlation analysis
+performAnalysisForContrast <- function(contrastName, geneData, significantGenes, metadata, outputDir) {
+  # Filter for high variance genes
+  highVarianceGenes <- getTopVarianceGenes(geneData[significantGenes, ], 500)
+  
+  # Perform correlation analysis
+  outputFilePrefix <- file.path(outputDir, contrastName)
+  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, '20E', outputFilePrefix)
+  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, 'Rvalue', outputFilePrefix)
+}
+
+
+# FUNCTION to filter out low-expressed genes
+filterLowExpressedGenes <- function(exprData) {
+    cutoff <- log2(10) # Adjust based on your dataset, here using log2 CPM of 10 as an example
+    filteredData <- exprData[rowMeans(log2(exprData + 1)) > cutoff, ]
+    return(filteredData)
+}
+
+# FUNCTION to select a subset of genes based on variance
+selectSubsetGenesForWGCNA <- function(exprData) {
+    gene_variance <- apply(exprData, 1, var)
+    high_variance_genes <- names(sort(gene_variance, decreasing = TRUE)[1:5000])
+    return(high_variance_genes)
+}
+
+# FUNCTION for WGCNA analysis, adapted to include DESeq2 and Limma data processing
+performWGCNAAndSave <- function(exprData, metadata, experimentName, outputDirType) {
+    filteredExprData <- filterLowExpressedGenes(exprData)
+    high_variance_genes <- selectSubsetGenesForWGCNA(filteredExprData)
+    finalExprData <- filteredExprData[high_variance_genes, ]
+    
+    # Choose power
+    sft <- pickSoftThreshold(finalExprData, powerVector = (1:10), verbose = 5)
+    softPower <- sft$powerEstimate
+    
+    # Build network
+    adj <- adjacency(finalExprData, power = softPower)
+    TOM <- TOMsimilarity(adj)
+    geneTree <- hclust(as.dist(1-TOM), method = "average")
+    dynamicMods <- cutreeDynamic(dendro = geneTree, deepSplit = 2, minClusterSize = 30)
+    mergedDynamicMods <- mergeCloseModules(finalExprData, dynamicMods, cutHeight = 0.25, verbose = 3)
+    
+    # Relate modules to traits
+    traitData <- metadata[, c("20E", "Rvalue")]
+    MEList <- moduleEigengenes(finalExprData, colors = mergedDynamicMods$colors)
+    MEs <- MEList$eigengenes
+    METraitsRelation <- cor(MEs, traitData, use = "pairwise.complete.obs")
+    METraitsPvalue <- corPvalueStudent(METraitsRelation, nrow(finalExprData))
+    
+    # Save results
+    write.csv(METraitsRelation, file.path(output_dir, outputDirType, paste0(experimentName, "_METraitsRelation.csv")))
+    write.csv(METraitsPvalue, file.path(output_dir, outputDirType, paste0(experimentName, "_METraitsPvalue.csv")))
+    
+    png(file.path(output_dir, outputDirType, paste0(experimentName, "_ModuleTraitRelationship.png")))
+    corrplot(METraitsRelation, method = "circle")
+    dev.off()
+}
+
+
+# FUNCTION Enhanced Visualization for WGCNA
+plotModuleTraitRelationships <- function(METraitsRelation, outputDir, experimentName) {
+  png(file.path(outputDir, paste0(experimentName, "_ModuleTraitRelationships.png")))
+  corrplot(METraitsRelation, method = "circle")
+  dev.off()
+}
+
+# FUNCTION Summarize Significant Findings
+summarizeSignificantFindings <- function(dds, contrastDirs) {
+  significantGenesList <- list()
+  for (dir in contrastDirs) {
+    resultsPath <- file.path(dir, "DESeq2_results.tsv")
+    if (file.exists(resultsPath)) {
+      results <- read.csv(resultsPath)
+      sigResults <- results[results$padj < pvalue_threshold, ]
+      sigGenesUp <- sum(sigResults$log2FoldChange > logfc_threshold)
+      sigGenesDown <- sum(sigResults$log2FoldChange < -logfc_threshold)
+      significantGenesList[[dir]] <- list(Upregulated=sigGenesUp, Downregulated=sigGenesDown)
+    }
+  }
+  return(significantGenesList)
+}
+
+# FUNCTION Add a section to summarize WGCNA Findings
+summarizeWGCNAFindings <- function(outputDir, experimentNames) {
+  summaryList <- list()
+  for (experimentName in experimentNames) {
+    relationPath <- file.path(outputDir, paste0(experimentName, "_METraitsRelation.csv"))
+    if (file.exists(relationPath)) {
+      relations <- read.csv(relationPath)
+      significantModules <- which.max(abs(relations$correlation))
+      summaryList[[experimentName]] <- significantModules
+    }
+  }
+  return(summaryList)
+}
+
+
+# FUNCTION Summarize and save significant findings for DESeq2 and Limma
+saveSignificantFindingsSummary <- function(outputDirType, method, contrastDirs) {
+  # Use the 'summarizeSignificantFindings' function here
+  significantGenesList <- summarizeSignificantFindings(dds, contrastDirs)
+  summaryFilePath <- file.path(outputDirType, "Summary", paste0(method, "_SignificantFindingsSummary.csv"))
+  # Convert the list to a data frame for easier CSV writing, if necessary
+  # This step may require transformation of 'significantGenesList' to a suitable format
+  write.csv(significantGenesList, summaryFilePath, row.names = TRUE)
+}
+
+# FUNCTION Save WGCNA findings summary
+saveWGCNAFindingsSummary <- function(outputDir, experimentNames, method) {
+  summaryList <- summarizeWGCNAFindings(outputDir, experimentNames)
+  summaryFilePath <- file.path(outputDir, "Summary", paste0(method, "_WGCNAFindingsSummary.csv"))
+  # Convert the list to a data frame for easier CSV writing, if necessary
+  # This step may require transformation of 'summaryList' to a suitable format
+  write.csv(summaryList, summaryFilePath, row.names = TRUE)
+}
+
+## PERFORM ANALYSES ##
+
+# Read Metadata
+metadata <- read.csv(metadata_path)
+metadata$Treatment <- with(metadata, paste(Experiment, Stage, sep="_"))
+metadata$Experiment_Stage <- with(metadata, paste(Experiment, Stage, sep="_"))
+
+# Define Output Directories
+output_dir <- create_dir(file.path(samples_root_dir, "Analysis_Results"))
+output_dir_deseq2 <- create_dir(file.path(output_dir, "DESeq2"))
+output_dir_limma <- create_dir(file.path(output_dir, "Limma"))
+heatmap_dir_deseq2 <- create_dir(file.path(output_dir_deseq2, "DESeq2_Heatmaps"))
+heatmap_dir_limma <- create_dir(file.path(output_dir_limma, "Limma_Heatmaps"))
+overlap_dir <- create_dir(file.path(output_dir, "Overlap_Analysis"))
+summary_dir_deseq2 <- create_dir(file.path(output_dir_deseq2, "Summary"))
+summary_dir_limma <- create_dir(file.path(output_dir_limma, "Summary"))
 pca_output_dir <- create_dir(file.path(output_dir, "PCA_Plots"))
+
+# Import Data Using Tximport
+txi <- tximport(file.path(samples_root_dir, metadata$filename, "quant.sf"), type = "salmon", txOut = TRUE)
+
+# Prepare DESeq DataSet
+dds <- DESeqDataSetFromTximport(txi, colData = metadata, design = ~ Treatment)
+dds <- DESeq(dds)
+
+# Normalizing Counts for Limma-Voom
+v <- voom(counts(dds), model.matrix(~ Treatment, data = metadata), plot = FALSE)
+fit <- lmFit(v, model.matrix(~ Treatment, data = metadata))
 
 # Run PCA for each experiment and save the plots in their respective directories
 lapply(unique(metadata$Experiment), function(exp) {
@@ -84,8 +238,6 @@ lapply(unique(metadata$Experiment), function(exp) {
 
 # Additionally, perform and save PCA for all experiments together
 performPCA(dds, "All_Experiments", pca_output_dir, is_combined = TRUE)
-
-
 
 # Experiments, Stages, and Contrast Comparisons
 experiments <- unique(metadata$Experiment)
@@ -179,57 +331,7 @@ for (experiment in experiments) {
 }
 
 
-
-# FUNCTION for correlation analysis and plotting
-# Assuming 'dds' and 'fit' are already created and 'metadata' is loaded
-
-# Function to get top genes based on variance
-getTopVarianceGenes <- function(data, topN = 500) {
-  variances <- apply(data, 1, var)
-  highVarianceGenes <- names(sort(variances, decreasing = TRUE)[1:topN])
-  return(highVarianceGenes)
-}
-
-# FUNCTION for Correlation Analyses
-performCorrelationAnalysis <- function(geneExpressionMatrix, significantGenes, metadata, phenotype, outputFilePrefix) {
-  # Ensure geneExpressionMatrix only includes significantGenes with high variance
-  significantGeneData <- geneExpressionMatrix[rownames(geneExpressionMatrix) %in% significantGenes,]
-  
-  # Calculate correlation
-  corMatrix <- cor(significantGeneData, metadata[, phenotype, drop = FALSE], use = "pairwise.complete.obs")
-  
-  # Identify top correlated genes
-  topCorrelations <- sort(corMatrix, decreasing = TRUE)
-  topPositives <- head(topCorrelations, 20)
-  topNegatives <- tail(topCorrelations, 20)
-  
-  # Plotting and Saving
-  plotAndSaveCorrelations <- function(corSubset, suffix) {
-    png(paste0(outputFilePrefix, "_", suffix, "_correlation.png"))
-    corrplot(corSubset, method = "circle")
-    dev.off()
-    write.csv(as.data.frame(corSubset), paste0(outputFilePrefix, "_", suffix, "_correlation.csv"))
-  }
-  
-  plotAndSaveCorrelations(topPositives, "Top20_Positive")
-  plotAndSaveCorrelations(topNegatives, "Top20_Negative")
-}
-
-
-# FUNCTION to perform variance filtering and correlation analysis
-performAnalysisForContrast <- function(contrastName, geneData, significantGenes, metadata, outputDir) {
-  # Filter for high variance genes
-  highVarianceGenes <- getTopVarianceGenes(geneData[significantGenes, ], 500)
-  
-  # Perform correlation analysis
-  outputFilePrefix <- file.path(outputDir, contrastName)
-  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, '20E', outputFilePrefix)
-  performCorrelationAnalysis(geneData, highVarianceGenes, metadata, 'Rvalue', outputFilePrefix)
-}
-
-
-
-# Loop through contrasts to perform analysis
+# Loop through contrasts to perform correlation analysis
 for (experiment in experiments) {
   stages <- unique(metadata$Stage[metadata$Experiment == experiment])
   
@@ -257,54 +359,6 @@ for (experiment in experiments) {
 }
 
 
-
-# FUNCTION to filter out low-expressed genes
-filterLowExpressedGenes <- function(exprData) {
-    cutoff <- log2(10) # Adjust based on your dataset, here using log2 CPM of 10 as an example
-    filteredData <- exprData[rowMeans(log2(exprData + 1)) > cutoff, ]
-    return(filteredData)
-}
-
-# FUNCTION to select a subset of genes based on variance
-selectSubsetGenesForWGCNA <- function(exprData) {
-    gene_variance <- apply(exprData, 1, var)
-    high_variance_genes <- names(sort(gene_variance, decreasing = TRUE)[1:5000])
-    return(high_variance_genes)
-}
-
-# FUNCTION for WGCNA analysis, adapted to include DESeq2 and Limma data processing
-performWGCNAAndSave <- function(exprData, metadata, experimentName, outputDirType) {
-    filteredExprData <- filterLowExpressedGenes(exprData)
-    high_variance_genes <- selectSubsetGenesForWGCNA(filteredExprData)
-    finalExprData <- filteredExprData[high_variance_genes, ]
-    
-    # Choose power
-    sft <- pickSoftThreshold(finalExprData, powerVector = (1:10), verbose = 5)
-    softPower <- sft$powerEstimate
-    
-    # Build network
-    adj <- adjacency(finalExprData, power = softPower)
-    TOM <- TOMsimilarity(adj)
-    geneTree <- hclust(as.dist(1-TOM), method = "average")
-    dynamicMods <- cutreeDynamic(dendro = geneTree, deepSplit = 2, minClusterSize = 30)
-    mergedDynamicMods <- mergeCloseModules(finalExprData, dynamicMods, cutHeight = 0.25, verbose = 3)
-    
-    # Relate modules to traits
-    traitData <- metadata[, c("20E", "Rvalue")]
-    MEList <- moduleEigengenes(finalExprData, colors = mergedDynamicMods$colors)
-    MEs <- MEList$eigengenes
-    METraitsRelation <- cor(MEs, traitData, use = "pairwise.complete.obs")
-    METraitsPvalue <- corPvalueStudent(METraitsRelation, nrow(finalExprData))
-    
-    # Save results
-    write.csv(METraitsRelation, file.path(output_dir, outputDirType, paste0(experimentName, "_METraitsRelation.csv")))
-    write.csv(METraitsPvalue, file.path(output_dir, outputDirType, paste0(experimentName, "_METraitsPvalue.csv")))
-    
-    png(file.path(output_dir, outputDirType, paste0(experimentName, "_ModuleTraitRelationship.png")))
-    corrplot(METraitsRelation, method = "circle")
-    dev.off()
-}
-
 # Iterate over experiments for WGCNA on DESeq2 and Limma results
 foreach(experiment = unique(metadata$Experiment)) %dopar% {
     experiment_metadata <- metadata[metadata$Experiment == experiment, ]
@@ -317,14 +371,6 @@ foreach(experiment = unique(metadata$Experiment)) %dopar% {
     # Limma Data Preparation
     logCPM_data <- cpm(fit, log = TRUE)
     performWGCNAAndSave(logCPM_data, experiment_metadata, paste0(experiment, "_Limma"), output_dir_limma)
-}
-
-
-# FUNCTION Enhanced Visualization for WGCNA
-plotModuleTraitRelationships <- function(METraitsRelation, outputDir, experimentName) {
-  png(file.path(outputDir, paste0(experimentName, "_ModuleTraitRelationships.png")))
-  corrplot(METraitsRelation, method = "circle")
-  dev.off()
 }
 
 
@@ -346,48 +392,7 @@ foreach(experiment = unique(metadata$Experiment)) %dopar% {
 }
 
 
-# FUNCTION Summarize Significant Findings
-summarizeSignificantFindings <- function(dds, contrastDirs) {
-  significantGenesList <- list()
-  for (dir in contrastDirs) {
-    resultsPath <- file.path(dir, "DESeq2_results.tsv")
-    if (file.exists(resultsPath)) {
-      results <- read.csv(resultsPath)
-      sigResults <- results[results$padj < pvalue_threshold, ]
-      sigGenesUp <- sum(sigResults$log2FoldChange > logfc_threshold)
-      sigGenesDown <- sum(sigResults$log2FoldChange < -logfc_threshold)
-      significantGenesList[[dir]] <- list(Upregulated=sigGenesUp, Downregulated=sigGenesDown)
-    }
-  }
-  return(significantGenesList)
-}
-
-# FUNCTION Add a section to summarize WGCNA Findings
-summarizeWGCNAFindings <- function(outputDir, experimentNames) {
-  summaryList <- list()
-  for (experimentName in experimentNames) {
-    relationPath <- file.path(outputDir, paste0(experimentName, "_METraitsRelation.csv"))
-    if (file.exists(relationPath)) {
-      relations <- read.csv(relationPath)
-      significantModules <- which.max(abs(relations$correlation))
-      summaryList[[experimentName]] <- significantModules
-    }
-  }
-  return(summaryList)
-}
-
-
-# FUNCTION Summarize and save significant findings for DESeq2 and Limma
-saveSignificantFindingsSummary <- function(outputDirType, method, contrastDirs) {
-  # Use the 'summarizeSignificantFindings' function here
-  significantGenesList <- summarizeSignificantFindings(dds, contrastDirs)
-  summaryFilePath <- file.path(outputDirType, "Summary", paste0(method, "_SignificantFindingsSummary.csv"))
-  # Convert the list to a data frame for easier CSV writing, if necessary
-  # This step may require transformation of 'significantGenesList' to a suitable format
-  write.csv(significantGenesList, summaryFilePath, row.names = TRUE)
-}
-
-# calls to save significant findings summaries
+# Calls to save significant findings summaries
 contrastDirsDESeq2 <- list.dirs(path = output_dir_deseq2, full.names = TRUE, recursive = FALSE)
 contrastDirsLimma <- list.dirs(path = output_dir_limma, full.names = TRUE, recursive = FALSE)
 
@@ -395,16 +400,7 @@ saveSignificantFindingsSummary(output_dir_deseq2, "DESeq2", contrastDirsDESeq2)
 saveSignificantFindingsSummary(output_dir_limma, "Limma", contrastDirsLimma)
 
 
-# FUNCTION Save WGCNA findings summary
-saveWGCNAFindingsSummary <- function(outputDir, experimentNames, method) {
-  summaryList <- summarizeWGCNAFindings(outputDir, experimentNames)
-  summaryFilePath <- file.path(outputDir, "Summary", paste0(method, "_WGCNAFindingsSummary.csv"))
-  # Convert the list to a data frame for easier CSV writing, if necessary
-  # This step may require transformation of 'summaryList' to a suitable format
-  write.csv(summaryList, summaryFilePath, row.names = TRUE)
-}
-
-# Call to save WGCNA findings summaries
+# Calls to save WGCNA findings summaries
 experimentNamesDESeq2 <- sub(pattern = output_dir_deseq2, replacement = "", x = contrastDirsDESeq2)
 experimentNamesLimma <- sub(pattern = output_dir_limma, replacement = "", x = contrastDirsLimma)
 
