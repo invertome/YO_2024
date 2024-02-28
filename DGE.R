@@ -241,7 +241,7 @@ performPCA(dds, "All_Experiments", pca_output_dir, is_combined = TRUE)
 # Experiments, Stages, and Contrast Comparisons
 experiments <- unique(metadata$Experiment)
 
-fforeach(experiment = experiments, .packages = c("DESeq2", "limma", "VennDiagram", "ggplot2", "pheatmap", "EnhancedVolcano"), .export = c("create_dir", "results", "dds", "makeContrasts", "contrasts.fit", "eBayes", "cpm", "performPCA", "vst", "pheatmap", "EnhancedVolcano", "output_dir_deseq2", "output_dir_limma", "heatmap_dir_deseq2", "heatmap_dir_limma", "overlap_dir", "pvalue_threshold", "logfc_threshold")) %dopar% {
+foreach(experiment = experiments, .packages = c("DESeq2", "limma", "VennDiagram", "ggplot2", "pheatmap", "EnhancedVolcano"), .export = c("create_dir", "results", "dds", "makeContrasts", "contrasts.fit", "eBayes", "cpm", "performPCA", "vst", "pheatmap", "EnhancedVolcano", "output_dir_deseq2", "output_dir_limma", "heatmap_dir_deseq2", "heatmap_dir_limma", "overlap_dir", "pvalue_threshold", "logfc_threshold")) %dopar% {
     stages <- unique(metadata$Stage[metadata$Experiment == experiment])
     
     # DESeq2 and Limma Analysis for Each Contrast
