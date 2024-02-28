@@ -55,20 +55,36 @@ v <- voom(counts(dds), model.matrix(~ Treatment, data = metadata), plot = FALSE)
 fit <- lmFit(v, model.matrix(~ Treatment, data = metadata))
 
 
-# Principal Component Analysis (PCA) for Each Experiment
-performPCA <- function(dds, experiment) {
+# FUNCTION Principal Component Analysis (PCA) for Each Experiment and All Experiments Together
+performPCA <- function(dds, experiment, output_dir, is_combined = FALSE) {
   rld <- rlog(dds, blind=FALSE)
   data <- plotPCA(rld, intgroup=c("Experiment", "Stage"), returnData=TRUE)
-  ggplot(data, aes(x=PC1, y=PC2, color=Experiment, shape=Stage)) +
+  
+  plot_title <- if (is_combined) "PCA for All Experiments" else paste("PCA for", experiment)
+  p <- ggplot(data, aes(x=PC1, y=PC2, color=Experiment, shape=Stage)) +
     geom_point(size=3) + 
-    ggtitle(paste("PCA for", experiment))
+    ggtitle(plot_title)
+  
+  # Determine file name based on whether it's a combined PCA or individual
+  file_name <- if (is_combined) "PCA_All_Experiments.png" else paste0("PCA_", experiment, ".png")
+  pcaPlotPath <- file.path(output_dir, file_name)
+  
+  # Save the plot
+  ggsave(pcaPlotPath, plot = p, width = 10, height = 8)
 }
 
-# Run PCA for each experiment
+# Define the root directory for saving PCA plots
+pca_output_dir <- create_dir(file.path(output_dir, "PCA_Plots"))
+
+# Run PCA for each experiment and save the plots in their respective directories
 lapply(unique(metadata$Experiment), function(exp) {
   dds_subset <- dds[, dds$Experiment == exp]
-  performPCA(dds_subset, exp)
+  performPCA(dds_subset, exp, pca_output_dir)
 })
+
+# Additionally, perform and save PCA for all experiments together
+performPCA(dds, "All_Experiments", pca_output_dir, is_combined = TRUE)
+
 
 
 # Experiments, Stages, and Contrast Comparisons
@@ -164,7 +180,7 @@ for (experiment in experiments) {
 
 
 
-# Define a function for correlation analysis and plotting
+# FUNCTION for correlation analysis and plotting
 performCorrelationAnalysis <- function(geneExpressionMatrix, metadata, outputFilePrefix) {
   # Calculate correlation between gene expression and phenotype data
   cor_20E <- cor(geneExpressionMatrix, metadata$`20E`, use = "pairwise.complete.obs")
@@ -212,21 +228,21 @@ for (experiment in experiments) {
 
 
 
-# Function to filter out low-expressed genes
+# FUNCTION to filter out low-expressed genes
 filterLowExpressedGenes <- function(exprData) {
     cutoff <- log2(10) # Adjust based on your dataset, here using log2 CPM of 10 as an example
     filteredData <- exprData[rowMeans(log2(exprData + 1)) > cutoff, ]
     return(filteredData)
 }
 
-# Function to select a subset of genes based on variance
+# FUNCTION to select a subset of genes based on variance
 selectSubsetGenesForWGCNA <- function(exprData) {
     gene_variance <- apply(exprData, 1, var)
     high_variance_genes <- names(sort(gene_variance, decreasing = TRUE)[1:5000])
     return(high_variance_genes)
 }
 
-# Function for WGCNA analysis, adapted to include DESeq2 and Limma data processing
+# FUNCTION for WGCNA analysis, adapted to include DESeq2 and Limma data processing
 performWGCNAAndSave <- function(exprData, metadata, experimentName, outputDirType) {
     filteredExprData <- filterLowExpressedGenes(exprData)
     high_variance_genes <- selectSubsetGenesForWGCNA(filteredExprData)
@@ -274,6 +290,33 @@ foreach(experiment = unique(metadata$Experiment)) %dopar% {
 }
 
 
+# Enhanced Visualization for WGCNA
+plotModuleTraitRelationships <- function(METraitsRelation, outputDir, experimentName) {
+  png(file.path(outputDir, paste0(experimentName, "_ModuleTraitRelationships.png")))
+  corrplot(METraitsRelation, method = "circle")
+  dev.off()
+}
+
+
+# After the WGCNA analysis and saving of METraitsRelation.csv for each experiment
+foreach(experiment = unique(metadata$Experiment)) %dopar% {
+  experiment_metadata <- metadata[metadata$Experiment == experiment, ]
+
+  # Define the directory where the METraitsRelation.csv file is saved for each experiment
+  outputDirTypeDESeq2 <- file.path(output_dir, "DESeq2", paste0(experiment, "_DESeq2"))
+  outputDirTypeLimma <- file.path(output_dir, "Limma", paste0(experiment, "_Limma"))
+
+  # Read the METraitsRelation.csv file for DESeq2 and Limma results
+  METraitsRelationDESeq2 <- read.csv(file.path(outputDirTypeDESeq2, "_METraitsRelation.csv"))
+  METraitsRelationLimma <- read.csv(file.path(outputDirTypeLimma, "_METraitsRelation.csv"))
+
+  # Plot and save the module-trait relationships using the defined function
+  plotModuleTraitRelationships(METraitsRelationDESeq2, outputDirTypeDESeq2, paste0(experiment, "_DESeq2"))
+  plotModuleTraitRelationships(METraitsRelationLimma, outputDirTypeLimma, paste0(experiment, "_Limma"))
+}
+
+
+
 # Summarize Significant Findings
 summarizeSignificantFindings <- function(dds, contrastDirs) {
   significantGenesList <- list()
@@ -304,12 +347,6 @@ summarizeWGCNAFindings <- function(outputDir, experimentNames) {
   return(summaryList)
 }
 
-# Enhanced Visualization for WGCNA
-plotModuleTraitRelationships <- function(METraitsRelation, outputDir, experimentName) {
-  png(file.path(outputDir, paste0(experimentName, "_ModuleTraitRelationships.png")))
-  corrplot(METraitsRelation, method = "circle")
-  dev.off()
-}
 
 # Summarize and save significant findings for DESeq2 and Limma
 saveSignificantFindingsSummary <- function(outputDirType, method, contrastDirs) {
