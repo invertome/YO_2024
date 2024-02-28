@@ -14,9 +14,9 @@ library(doParallel)
 
 
 # Set Parameters
-pvalue_threshold <- 0.05
-logfc_threshold <- log2(1.5)
-metadata_path <- "Sample_Metadata.csv"
+pvalue_threshold <- 0.01 # Adjustable
+logfc_threshold <- log2(2) # Adjustable
+metadata_path <- "Sample_Metadata.csv" # Make sure the columns match with expected by functions (e.g., 20E, Rvalue)
 samples_root_dir <- "/path/to/samples/" # Adjust this path
 
 # Register parallel backend to speed up computations
@@ -49,10 +49,8 @@ performPCA <- function(dds, experiment, output_dir, is_combined = FALSE) {
   ggsave(pcaPlotPath, plot = p, width = 10, height = 8)
 }
 
-# FUNCTION for correlation analysis and plotting
-# Assuming 'dds' and 'fit' are already created and 'metadata' is loaded
 
-# FUNCTION to get top genes based on variance
+# FUNCTION to get top genes based on variance for Correlation Analyses
 getTopVarianceGenes <- function(data, topN = 500) {
   variances <- apply(data, 1, var)
   highVarianceGenes <- names(sort(variances, decreasing = TRUE)[1:topN])
