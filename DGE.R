@@ -22,6 +22,7 @@ samples_root_dir <- "/path/to/samples/" # Adjust this path
 # Register parallel backend to speed up computations
 registerDoParallel(cores = 8) # Adjust based on system's capabilities
 
+
 ## FUNCTIONS ##
 
 # FUNCTION to Create Directories
@@ -98,7 +99,7 @@ performAnalysisForContrast <- function(contrastName, geneData, significantGenes,
 
 # FUNCTION to filter out low-expressed genes
 filterLowExpressedGenes <- function(exprData) {
-    cutoff <- log2(10) # Adjust based on your dataset, here using log2 CPM of 10 as an example
+    cutoff <- log2(logfc_threshold)
     filteredData <- exprData[rowMeans(log2(exprData + 1)) > cutoff, ]
     return(filteredData)
 }
