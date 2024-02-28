@@ -323,9 +323,26 @@ for (experiment in experiments) {
             }
 
             # Overlap Analysis with Venn Diagram
-            venn_data <- list(DESeq2 = deseq2_sig_genes, Limma = limma_sig_genes)
-            png(file.path(contrast_dir_overlap, paste0(contrast_name, "_Venn.png")))
-            draw.pairwise.venn(area1 = length(deseq2_sig_genes), area2 = length(limma_sig_genes), cross.area = length(intersect(deseq2_sig_genes, limma_sig_genes)), category = c("DESeq2", "Limma"), lty = "blank")
+	    common_genes <- intersect(deseq2_sig_genes, limma_sig_genes)
+            # Extract expression and logfoldchange data for common genes
+            common_data <- data.frame(
+              Gene = common_genes,
+              LogFoldChange_DESeq2 = res_deseq2[common_genes, "log2FoldChange"],
+              PValue_DESeq2 = res_deseq2[common_genes, "pvalue"],
+              LogFoldChange_Limma = fit2$table[common_genes, "logFC"],
+              PValue_Limma = fit2$table[common_genes, "P.Value"]
+            )
+            
+            # Save to CSV
+            write.csv(common_data, paste0(outputFilePrefix, "_common_genes.csv"), row.names = FALSE)
+            
+            # Venn Diagram Plotting
+            png(file.path(outputFilePrefix, "_Venn.png"))
+            draw.pairwise.venn(
+              area1 = length(deseq2_sig_genes), area2 = length(limma_sig_genes),
+              cross.area = length(common_genes),
+              category = c("DESeq2", "Limma"), lty = "blank"
+            )
             dev.off()
         }
     }
